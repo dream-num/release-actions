@@ -183,23 +183,9 @@ export async function planPromotion({ packages, env = process.env, fetcher = fet
   );
 }
 
-export async function preparePromotion({
-  packageName,
-  version,
-  latest,
-  directory,
-  env = process.env,
-  fetcher = fetch,
-  batchPlan,
-  targetTag = latest ? "latest" : "promoted",
-}) {
-  validateSelection(packageName, version, latest);
-  if (!env.INSIDER_TOKEN) throw new Error("INSIDER_TOKEN is required for Promotion dry-run.");
-  await mkdir(directory, { recursive: true });
-  // Remove stale output first: a failed preparation must never leave a publishable record.
-  await rm(join(directory, RECORD), { force: true });
-  const plan = batchPlan ?? await planPromotion({ packages: [{ name: packageName, version }], env, fetcher });
-  assertPlan(plan, packageName, version);
+// Read metadata and exact archive bytes, with no promotion or public registry operation.
+export async function readInsiderArtifact({ packageName, version, targetTag, directory, fetcher = fetch }) {
+  validateSelection(packageName, version, targetTag === "latest");
   const packument = await responseJson(
     await response(packageUrl(INSIDER, packageName), {}, fetcher, "Insider packument"),
     "Insider packument",
@@ -218,9 +204,31 @@ export async function preparePromotion({
   const bytes = await downloadInsiderTarball(tarballUrl, fetcher);
   const hash = integrity(bytes);
   if (hash !== metadata.dist?.integrity) throw new Error("Original tarball integrity mismatch.");
+  await mkdir(directory, { recursive: true });
   const tarballPath = join(directory, TARBALL);
   await writeFile(tarballPath, bytes);
   await readTarball(tarballPath, packageName, version);
+  return { hash, tarballUrl };
+}
+
+export async function preparePromotion({
+  packageName,
+  version,
+  latest,
+  directory,
+  env = process.env,
+  fetcher = fetch,
+  batchPlan,
+  targetTag = latest ? "latest" : "promoted",
+}) {
+  validateSelection(packageName, version, latest);
+  if (!env.INSIDER_TOKEN) throw new Error("INSIDER_TOKEN is required for Promotion dry-run.");
+  await mkdir(directory, { recursive: true });
+  // Remove stale output first: a failed preparation must never leave a publishable record.
+  await rm(join(directory, RECORD), { force: true });
+  const plan = batchPlan ?? await planPromotion({ packages: [{ name: packageName, version }], env, fetcher });
+  assertPlan(plan, packageName, version);
+  const { hash, tarballUrl } = await readInsiderArtifact({ packageName, version, targetTag, directory, fetcher });
   const record = {
     package: packageName,
     version,

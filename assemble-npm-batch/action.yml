@@ -1,0 +1,18 @@
+name: Assemble exact Insider npm batch
+description: Read existing Insider tarballs and pin their SHA-512 digests without registry writes.
+inputs:
+  selection:
+    description: JSON with batchId and packages (exact name, version, tag per entry).
+    required: true
+outputs:
+  batch:
+    description: Exact checked promotion manifest.
+    value: ${{ steps.assemble.outputs.batch }}
+runs:
+  using: composite
+  steps:
+    - id: assemble
+      shell: bash
+      env:
+        ACTION_SELECTION: ${{ inputs.selection }}
+      run: node "$GITHUB_ACTION_PATH/assemble.mjs"
