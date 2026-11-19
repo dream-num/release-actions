@@ -43,3 +43,31 @@ jobs:
           test '${{ steps.validate.outcome }}' = failure
           test '${{ steps.submit.outcome }}' = failure
           test '${{ steps.check.outcome }}' = failure
+      - id: fixture
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
+        run: node test/fixtures/make-batch.mjs
+      - id: good_batch
+        uses: ./promote-npm
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
+          INSIDER_TOKEN: synthetic-not-a-credential
+          NODE_OPTIONS: --import=${{ github.workspace }}/test/fixtures/batch-fetch.mjs
+        with:
+          batch: ${{ steps.fixture.outputs.batch }}
+      - name: Verify the two-package composite validation
+        run: |
+          node -e 'const r=require("./.promotion/batch/batch-result.json"); if (r.phase!=="validated" || r.packages.length!==2 || r.packages.some(p=>p.status!=="validated")) process.exit(1)'
+      - id: bad_batch
+        continue-on-error: true
+        uses: ./promote-npm
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
+          INSIDER_TOKEN: synthetic-not-a-credential
+          NODE_OPTIONS: --import=${{ github.workspace }}/test/fixtures/batch-fetch.mjs
+        with:
+          batch: ${{ steps.fixture.outputs.bad }}
+      - name: Verify an exact digest mismatch fails closed
+        run: |
+          test '${{ steps.bad_batch.outcome }}' = failure
+          node -e 'const r=require("./.promotion/batch/batch-result.json"); if (r.phase!=="validation_failed" || r.packages.some(p=>p.status==="submitted")) process.exit(1)'

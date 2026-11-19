@@ -163,20 +163,9 @@ async function readTarball(path, packageName, version) {
   return manifest;
 }
 
-export async function preparePromotion({
-  packageName,
-  version,
-  latest,
-  directory,
-  env = process.env,
-  fetcher = fetch,
-}) {
-  validateSelection(packageName, version, latest);
+export async function planPromotion({ packages, env = process.env, fetcher = fetch }) {
   if (!env.INSIDER_TOKEN) throw new Error("INSIDER_TOKEN is required for Promotion dry-run.");
-  await mkdir(directory, { recursive: true });
-  // Remove stale output first: a failed preparation must never leave a publishable record.
-  await rm(join(directory, RECORD), { force: true });
-  const plan = await responseJson(
+  return responseJson(
     await response(
       `${INSIDER}-/insider/v1/promotions?wait=true&dryRun=true`,
       {
@@ -185,13 +174,31 @@ export async function preparePromotion({
           authorization: `Bearer ${env.INSIDER_TOKEN}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ packages: [{ name: packageName, version }] }),
+        body: JSON.stringify({ packages }),
       },
       fetcher,
       "Insider Promotion dry-run",
     ),
     "Insider Promotion dry-run",
   );
+}
+
+export async function preparePromotion({
+  packageName,
+  version,
+  latest,
+  directory,
+  env = process.env,
+  fetcher = fetch,
+  batchPlan,
+  targetTag = latest ? "latest" : "promoted",
+}) {
+  validateSelection(packageName, version, latest);
+  if (!env.INSIDER_TOKEN) throw new Error("INSIDER_TOKEN is required for Promotion dry-run.");
+  await mkdir(directory, { recursive: true });
+  // Remove stale output first: a failed preparation must never leave a publishable record.
+  await rm(join(directory, RECORD), { force: true });
+  const plan = batchPlan ?? await planPromotion({ packages: [{ name: packageName, version }], env, fetcher });
   assertPlan(plan, packageName, version);
   const packument = await responseJson(
     await response(packageUrl(INSIDER, packageName), {}, fetcher, "Insider packument"),
@@ -201,8 +208,8 @@ export async function preparePromotion({
   if (packument.name !== packageName || metadata?.name !== packageName || metadata.version !== version) {
     throw new Error("Insider metadata does not match the selected version.");
   }
-  if (latest && packument["dist-tags"]?.latest !== version) {
-    throw new Error("latest requires the selected version to be the current insider latest.");
+  if (targetTag !== "promoted" && packument["dist-tags"]?.[targetTag] !== version) {
+    throw new Error(`${targetTag} requires the selected version to be the current insider ${targetTag}.`);
   }
   const tarballUrl = new URL(metadata.dist?.tarball);
   if (tarballUrl.origin !== new URL(INSIDER).origin || tarballUrl.username || tarballUrl.password) {
@@ -219,7 +226,7 @@ export async function preparePromotion({
     version,
     registry: PUBLIC,
     latest,
-    tag: latest ? "latest" : "promoted",
+    tag: targetTag,
     integrity: hash,
     tarball: TARBALL,
     sourceTarball: tarballUrl.href,
@@ -236,7 +243,7 @@ export async function preparePromotion({
 
 // Explicit flags override publishConfig from the original manifest. No repacking.
 export function npmPublishArguments(tarball, tag, registry = PUBLIC) {
-  if (!["latest", "promoted"].includes(tag)) throw new Error("Unsupported promotion tag.");
+  if (!["latest", "promoted", "beta", "rc"].includes(tag)) throw new Error("Unsupported promotion tag.");
   return [
     "publish",
     tarball,
@@ -339,6 +346,7 @@ export async function publishPromotion({
   fetcher = fetch,
   publisher = publishTarball,
   tagger = setLatest,
+  targetTag = latest ? "latest" : "promoted",
 }) {
   // A failed new attempt must not leave a previous successful submission receipt.
   await rm(join(directory, "submission.json"), { force: true });
@@ -351,7 +359,7 @@ export async function publishPromotion({
     record.version !== version ||
     record.registry !== PUBLIC ||
     record.latest !== latest ||
-    record.tag !== (latest ? "latest" : "promoted") ||
+    record.tag !== targetTag ||
     record.repository !== env.GITHUB_REPOSITORY ||
     record.workflowRef !== env.GITHUB_WORKFLOW_REF ||
     record.tarball !== TARBALL ||
