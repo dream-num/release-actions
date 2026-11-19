@@ -5,24 +5,31 @@ import {assertPublishContext, INSIDER, planPromotion, preparePromotion, publishP
 
 const validHash = /^sha512-[A-Za-z0-9+/]{86}==$/u;
 const tags = new Set(['latest','beta','rc','promoted']);
-export function parseBatch(raw) {
+export function parseBatch(raw, {selection = false, runId = ''} = {}) {
   if (typeof raw !== 'string' || Buffer.byteLength(raw)>128*1024) throw Error('Batch manifest missing or too large');
-  const m=JSON.parse(raw);
+  const input=JSON.parse(raw);
+  if (selection && (!input || Object.keys(input).some(k=>!['batchId','packages'].includes(k)))) throw Error('Invalid package selection');
+  const m=selection ? {schema:1,batchId:input.batchId ?? (runId ? 'run-'+runId : 'promotion'),sourceRegistry:INSIDER,packages:input.packages} : input;
   if (m?.schema !== 1 || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/u.test(m.batchId ?? '') || m.sourceRegistry !== INSIDER ||
       !Array.isArray(m.packages) || m.packages.length<1 || m.packages.length>100 ||
       Object.keys(m).some(k=>!['schema','batchId','sourceRegistry','packages'].includes(k))) throw Error('Invalid batch manifest');
   const names=new Set();
   for (const p of m.packages) {
-    if (!p || Object.keys(p).some(k=>!['name','version','integrity','tag'].includes(k))) throw Error('Invalid batch package');
+    if (!p || Object.keys(p).some(k=>!(selection ? ['name','version','tag'] : ['name','version','integrity','tag']).includes(k))) throw Error('Invalid batch package');
     validatePackageName(p.name); validateVersion(p.version);
-    if(names.has(p.name) || !validHash.test(p.integrity ?? '') || !tags.has(p.tag) ||
+    if (selection && p.tag === undefined) p.tag='latest';
+    if(names.has(p.name) || (!selection && !validHash.test(p.integrity ?? '')) || !tags.has(p.tag) ||
        (p.tag==='latest' && /[-+]/u.test(p.version))) throw Error('Duplicate package, invalid integrity, or invalid tag/version');
     names.add(p.name);
   }
   return m;
 }
-export async function runBatch({ raw, mode='validate', directory, env=process.env, deps={} }) {
-  const m=parseBatch(raw);
+export async function runBatch({ raw, mode='validate', directory, env=process.env, deps={}, selection=false, allowedPackages='' }) {
+  const m=parseBatch(raw,{selection,runId:env.GITHUB_RUN_ID});
+  if (allowedPackages) {
+    const allowed=new Set(allowedPackages.split(',').map(x=>validatePackageName(x.trim())));
+    if (m.packages.some(p=>!allowed.has(p.name))) throw Error('Package outside the configured caller scope');
+  }
   if (!['validate','submit'].includes(mode)) throw Error('Invalid batch mode');
   if (mode==='submit') assertPublishContext(env);
   const { plan=planPromotion, prepare=preparePromotion, publish=publishPromotion,
@@ -49,7 +56,8 @@ export async function runBatch({ raw, mode='validate', directory, env=process.en
     // Every manifest and every tarball is checked before first write; the server order is used to submit.
     for (const {i,opts} of options) {
       const record=await prepare(opts);
-      if(record.integrity!==m.packages[i].integrity) throw Error('Batch artifact integrity mismatch');
+      if(!validHash.test(record.integrity ?? '') || (!selection && record.integrity!==m.packages[i].integrity)) throw Error('Batch artifact integrity mismatch');
+      report.packages[i].integrity=record.integrity;
       report.packages[i].status='validated';
     }
   } catch(error) {
@@ -75,7 +83,9 @@ export async function runBatch({ raw, mode='validate', directory, env=process.en
 
 if (process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href) {
   try {
-    const result=await runBatch({raw:process.env.ACTION_BATCH,mode:process.env.ACTION_MODE,directory:resolve('.promotion','batch')});
+    const selection=Boolean(process.env.ACTION_SELECTION);
+    const result=await runBatch({raw:selection?process.env.ACTION_SELECTION:process.env.ACTION_BATCH,selection,
+      allowedPackages:process.env.ACTION_ALLOWED_PACKAGES,mode:process.env.ACTION_MODE,directory:resolve('.promotion','batch')});
     console.log(JSON.stringify(result));
   } catch(error) {console.error(error.message); process.exitCode=1;}
 }

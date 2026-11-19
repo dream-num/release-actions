@@ -62,3 +62,17 @@ test('rejects duplicate package, extra member, and wrong source registry',async 
   await assert.rejects(runBatch({...f,raw,mode:'submit',env}),/plan mismatch/);
   assert.equal(f.steps.length,0);
 });
+test('selection needs names and versions only, records both computed digests, and submits the prepared paths',async t=>{
+  const f=await setup(t);
+  const selection=JSON.stringify({packages:manifest.packages.map(({name,version,tag})=>({name,version,tag}))});
+  const prepared=new Map();
+  const prepare=f.deps.prepare, publish=f.deps.publish;
+  f.deps.prepare=async opts=>{prepared.set(opts.packageName,opts.directory);return prepare(opts);};
+  f.deps.publish=async opts=>{assert.equal(opts.directory,prepared.get(opts.packageName));return publish(opts);};
+  await assert.rejects(runBatch({...f,raw:selection,selection:true,allowedPackages:'@synthetic/cli',mode:'submit',env}),/caller scope/);
+  assert.equal(f.steps.length,0);
+  const out=await runBatch({...f,raw:selection,selection:true,allowedPackages:'@synthetic/cli,@synthetic/collab',mode:'submit',env});
+  assert.deepEqual(out.packages.map(p=>p.integrity),manifest.packages.map(p=>p.integrity));
+  assert.deepEqual(f.steps,['plan','prepare @synthetic/collab','prepare @synthetic/cli','submit @synthetic/collab','submit @synthetic/cli']);
+  assert.equal(parseBatch('{"packages":[{"name":"workspace-demo","version":"1.0.0"}]}',{selection:true}).packages[0].tag,'latest');
+});

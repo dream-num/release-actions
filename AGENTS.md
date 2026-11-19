@@ -80,3 +80,11 @@ tags or change product workflow identity without an explicit request.
 ### Assemble an existing Insider batch
 
 Use `assemble-npm-batch` with JSON `selection`: `{"batchId":"sdk-release","packages":[{"name":"example-cli","version":"1.2.3","tag":"latest"},{"name":"example-collab","version":"1.2.3","tag":"latest"}]}`. It directly reads each exact version's Insider metadata and tarball, verifies raw bytes against Insider SRI and name/version in the archive, and outputs `batch`. It has no registry write or promotion dry-run call. Feed that exact output into `promote-npm` and preserve the manifest for independent public verification. This pins current Insider bytes, not independent producer build history; historic producer artifacts are not required. A single entry uses the same path. Do not regenerate a plan in response to a mismatch within a run.
+
+For ordinary callers, pass `selection` directly to `promote-npm`: JSON
+`{"packages":[{"name":"example-cli","version":"1.2.3"}]}`. Tag defaults to
+`latest`; pass an explicit tag for prereleases. The action records the digest
+of each original tarball and, in submit mode, uploads those same prepared
+archives in the same run. No operator-passed hash, intermediate CI artifact,
+or separate invocation is needed. Set `allowed_packages` in the product
+workflow when this caller may publish only a subset of packages.

@@ -79,3 +79,15 @@ jobs:
         run: |
           test '${{ steps.bad_batch.outcome }}' = failure
           node -e 'const r=require("./.promotion/batch/batch-result.json"); if (r.phase!=="validation_failed" || r.packages.some(p=>p.status==="submitted")) process.exit(1)'
+      - name: Validate two exact versions without passing a hash or plan
+        uses: ./promote-npm
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
+          INSIDER_TOKEN: synthetic-not-a-credential
+          NODE_OPTIONS: --import=${{ github.workspace }}/test/fixtures/batch-fetch.mjs
+        with:
+          selection: ${{ steps.fixture.outputs.selection }}
+          allowed_packages: '@synthetic/cli-sdk,@synthetic/collab-sdk'
+      - name: Check the shared Action calculated both SHA-512 digests
+        run: |
+          node -e 'const r=require("./.promotion/batch/batch-result.json"); if (r.phase!=="validated" || r.packages.length!==2 || r.packages.some(p=>p.status!=="validated"||!p.integrity.startsWith("sha512-"))) process.exit(1)'
