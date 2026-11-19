@@ -21,12 +21,8 @@ export function parseBatch(raw) {
   }
   return m;
 }
-export async function runBatch({ raw, mode='validate', directory, env=process.env, deps={}, allowedPackages='' }) {
+export async function runBatch({ raw, mode='validate', directory, env=process.env, deps={} }) {
   const m=parseBatch(raw);
-  if (allowedPackages) {
-    const allowed=new Set(allowedPackages.split(',').map(x=>validatePackageName(x.trim())));
-    if (m.packages.some(p=>!allowed.has(p.name))) throw Error('Package outside the configured caller scope');
-  }
   if (!['validate','submit'].includes(mode)) throw Error('Invalid batch mode');
   if (mode==='submit') assertPublishContext(env);
   const { plan=planPromotion, prepare=preparePromotion, publish=publishPromotion,
@@ -79,7 +75,7 @@ export async function runBatch({ raw, mode='validate', directory, env=process.en
 
 if (process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href) {
   try {
-    const result=await runBatch({raw:process.env.ACTION_BATCH,allowedPackages:process.env.ACTION_ALLOWED_PACKAGES,mode:process.env.ACTION_MODE,directory:resolve('.promotion','batch')});
+    const result=await runBatch({raw:process.env.ACTION_BATCH,mode:process.env.ACTION_MODE,directory:resolve('.promotion','batch')});
     console.log(JSON.stringify(result));
   } catch(error) {console.error(error.message); process.exitCode=1;}
 }
