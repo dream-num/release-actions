@@ -1,4 +1,4 @@
-import {readFile} from 'node:fs/promises';
+import {appendFile,readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 const base=process.env.FIXTURE_DIRECTORY;
@@ -19,7 +19,11 @@ globalThis.fetch=async (input,request)=>{
   const current = process.env.FIXTURE_MUTATE_TARBALL === 'true' && i === 1 ? await readFile(join(base,'pkg1-changed.tgz')) : source;
   if(decodeURIComponent(url.pathname)==='/'+p.name) return json({name:p.name,versions:{[p.version]:{name:p.name,version:p.version,
     dist:{integrity:'sha512-'+createHash('sha512').update(current).digest('base64'),tarball:origin+'/tar'+i}}},'dist-tags':{[p.tag]:p.version}});
-  if(url.pathname==='/tar'+i) return new Response(current);
+  if(url.pathname==='/tar'+i) {
+    if(process.env.FIXTURE_NO_TARBALL==='true') throw Error('Resolver must not fetch tarballs');
+    await appendFile(join(base,'downloads.txt'), url.pathname+'\n');
+    return new Response(current);
+  }
  }
  throw Error('Unexpected fixture path');
 };

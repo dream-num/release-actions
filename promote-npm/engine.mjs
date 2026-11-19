@@ -183,8 +183,8 @@ export async function planPromotion({ packages, env = process.env, fetcher = fet
   );
 }
 
-// Read metadata and exact archive bytes, with no promotion or public registry operation.
-export async function readInsiderArtifact({ packageName, version, targetTag, directory, fetcher = fetch }) {
+// Read the configured Insider registry's exact version metadata, without fetching a tarball.
+export async function readInsiderMetadata({ packageName, version, targetTag, fetcher = fetch }) {
   validateSelection(packageName, version, targetTag === "latest");
   const packument = await responseJson(
     await response(packageUrl(INSIDER, packageName), {}, fetcher, "Insider packument"),
@@ -201,9 +201,15 @@ export async function readInsiderArtifact({ packageName, version, targetTag, dir
   if (tarballUrl.origin !== new URL(INSIDER).origin || tarballUrl.username || tarballUrl.password) {
     throw new Error("The selected tarball must still be hosted by insider-npm.");
   }
+  return { tarballUrl, expectedIntegrity: metadata.dist?.integrity };
+}
+
+// Download exactly once, verify the raw bytes, and keep that same archive for submission.
+export async function readInsiderArtifact({ packageName, version, targetTag, directory, fetcher = fetch }) {
+  const { tarballUrl, expectedIntegrity } = await readInsiderMetadata({ packageName, version, targetTag, fetcher });
   const bytes = await downloadInsiderTarball(tarballUrl, fetcher);
   const hash = integrity(bytes);
-  if (hash !== metadata.dist?.integrity) throw new Error("Original tarball integrity mismatch.");
+  if (hash !== expectedIntegrity) throw new Error("Original tarball integrity mismatch.");
   await mkdir(directory, { recursive: true });
   const tarballPath = join(directory, TARBALL);
   await writeFile(tarballPath, bytes);

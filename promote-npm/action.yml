@@ -5,11 +5,8 @@ inputs:
     description: Exact npm package name
   version:
     description: Exact SemVer version
-  selection:
-    description: Package/version entries to fetch and promote in this run (optional tag defaults to latest).
-    default: ''
   allowed_packages:
-    description: Optional comma-separated caller package allowlist for selection or batch.
+    description: Optional comma-separated allowlist for a batch caller.
     default: ''
   batch:
     description: Exact package batch JSON; mutually exclusive with package/version.
@@ -28,20 +25,19 @@ runs:
         ACTION_PACKAGE: ${{ inputs.package }}
         ACTION_VERSION: ${{ inputs.version }}
         ACTION_LATEST: ${{ inputs.latest }}
-        ACTION_SELECTION: ${{ inputs.selection }}
         ACTION_ALLOWED_PACKAGES: ${{ inputs.allowed_packages }}
         ACTION_BATCH: ${{ inputs.batch }}
         ACTION_MODE: ${{ inputs.mode }}
       run: |
         set -euo pipefail
-        if [[ -n "$ACTION_BATCH$ACTION_SELECTION" ]]; then
-          if [[ ( -n "$ACTION_BATCH" && -n "$ACTION_SELECTION" ) || -n "$ACTION_PACKAGE$ACTION_VERSION" || "$ACTION_LATEST" != false ]]; then
-            echo "Use only selection or batch, without package, version, or latest" >&2; exit 2
+        if [[ -n "$ACTION_BATCH" ]]; then
+          if [[ -n "$ACTION_PACKAGE$ACTION_VERSION" || "$ACTION_LATEST" != false ]]; then
+            echo "batch cannot be combined with package, version, or latest" >&2; exit 2
           fi
           exec node "$GITHUB_ACTION_PATH/batch.mjs"
         fi
         if [[ -n "$ACTION_ALLOWED_PACKAGES" ]]; then
-          echo "allowed_packages requires selection or batch" >&2; exit 2
+          echo "allowed_packages requires batch" >&2; exit 2
         fi
         args=( "--package=$ACTION_PACKAGE" "--version=$ACTION_VERSION" "--latest=$ACTION_LATEST" )
         case "$ACTION_MODE" in
