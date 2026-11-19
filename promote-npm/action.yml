@@ -1,0 +1,38 @@
+name: Promote original Insider npm package
+description: Validate or submit the exact Insider artifact under the caller's publish identity.
+inputs:
+  package:
+    description: Exact npm package name
+    required: true
+  version:
+    description: Exact SemVer version
+    required: true
+  latest:
+    description: Whether to request npm latest
+    default: 'false'
+  mode:
+    description: validate or submit (validate is the default)
+    default: validate
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ACTION_PACKAGE: ${{ inputs.package }}
+        ACTION_VERSION: ${{ inputs.version }}
+        ACTION_LATEST: ${{ inputs.latest }}
+        ACTION_MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        args=( "--package=$ACTION_PACKAGE" "--version=$ACTION_VERSION" "--latest=$ACTION_LATEST" )
+        case "$ACTION_MODE" in
+          validate) ;;
+          submit)
+            node --input-type=module -e 'const m = await import(process.argv[1]); m.assertPublishContext(process.env)' "$GITHUB_ACTION_PATH/engine.mjs"
+            ;;
+          *) echo "mode must be validate or submit" >&2; exit 2 ;;
+        esac
+        node "$GITHUB_ACTION_PATH/engine.mjs" "${args[@]}"
+        if [[ "$ACTION_MODE" == submit ]]; then
+          node "$GITHUB_ACTION_PATH/engine.mjs" "${args[@]}" --publish
+        fi

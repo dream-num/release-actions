@@ -1,0 +1,26 @@
+name: Check exact npm package visibility
+description: Read exact public metadata and compare the artifact SHA-512.
+inputs:
+  package:
+    description: Exact npm package name
+    required: true
+  version:
+    description: Exact SemVer version
+    required: true
+  integrity:
+    description: Expected SHA-512 integrity
+    required: true
+outputs:
+  status:
+    description: visible_match, not_visible, or mismatch
+    value: ${{ steps.check.outputs.status }}
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        ACTION_PACKAGE: ${{ inputs.package }}
+        ACTION_VERSION: ${{ inputs.version }}
+        ACTION_INTEGRITY: ${{ inputs.integrity }}
+      run: node "$GITHUB_ACTION_PATH/check.mjs"

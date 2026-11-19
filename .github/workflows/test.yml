@@ -1,0 +1,45 @@
+name: Shared release Actions tests
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node --test promote-npm/*.test.mjs check-npm-public/*.test.mjs
+      - id: validate
+        continue-on-error: true
+        uses: ./promote-npm
+        with:
+          package: synthetic-demo
+          version: '1.0.0'
+      - id: submit
+        continue-on-error: true
+        uses: ./promote-npm
+        with:
+          package: synthetic-demo
+          version: '1.0.0'
+          mode: submit
+      - id: check
+        continue-on-error: true
+        uses: ./check-npm-public
+        with:
+          package: synthetic-demo
+          version: '1.0.0'
+          integrity: malformed
+      - name: Ensure the composite entrypoints fail closed without credentials or valid inputs
+        shell: bash
+        run: |
+          test '${{ steps.validate.outcome }}' = failure
+          test '${{ steps.submit.outcome }}' = failure
+          test '${{ steps.check.outcome }}' = failure
