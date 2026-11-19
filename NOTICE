@@ -1,0 +1,5 @@
+The promotion engine and its accompanying tests are adapted from
+dream-num/univer-workspace (PR #474, merge commit 5086a140e1900ba2347ff166545d9723eef34fe6),
+licensed under the Apache License, Version 2.0. The Action adapter, independent
+visibility action, and test workflow are new; the program is not a copy of the
+product workflow or its credentials and configuration.
