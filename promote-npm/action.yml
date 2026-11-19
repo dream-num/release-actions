@@ -1,0 +1,46 @@
+name: Promote original Insider npm package
+description: Validate or submit the exact Insider artifact under the caller's publish identity.
+inputs:
+  package:
+    description: Exact npm package name
+  version:
+    description: Exact SemVer version
+  batch:
+    description: Exact package batch JSON; mutually exclusive with package/version.
+    default: ''
+  latest:
+    description: Whether to request npm latest
+    default: 'false'
+  mode:
+    description: validate or submit (validate is the default)
+    default: validate
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ACTION_PACKAGE: ${{ inputs.package }}
+        ACTION_VERSION: ${{ inputs.version }}
+        ACTION_LATEST: ${{ inputs.latest }}
+        ACTION_BATCH: ${{ inputs.batch }}
+        ACTION_MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$ACTION_BATCH" ]]; then
+          if [[ -n "$ACTION_PACKAGE$ACTION_VERSION" || "$ACTION_LATEST" != false ]]; then
+            echo "batch cannot be combined with package, version, or latest" >&2; exit 2
+          fi
+          exec node "$GITHUB_ACTION_PATH/batch.mjs"
+        fi
+        args=( "--package=$ACTION_PACKAGE" "--version=$ACTION_VERSION" "--latest=$ACTION_LATEST" )
+        case "$ACTION_MODE" in
+          validate) ;;
+          submit)
+            node --input-type=module -e 'const m = await import(process.argv[1]); m.assertPublishContext(process.env)' "$GITHUB_ACTION_PATH/engine.mjs"
+            ;;
+          *) echo "mode must be validate or submit" >&2; exit 2 ;;
+        esac
+        node "$GITHUB_ACTION_PATH/engine.mjs" "${args[@]}"
+        if [[ "$ACTION_MODE" == submit ]]; then
+          node "$GITHUB_ACTION_PATH/engine.mjs" "${args[@]}" --publish
+        fi

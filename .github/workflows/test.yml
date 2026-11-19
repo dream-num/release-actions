@@ -1,0 +1,81 @@
+name: Shared release Actions tests
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node --test promote-npm/*.test.mjs check-npm-public/*.test.mjs
+      - id: validate
+        continue-on-error: true
+        uses: ./promote-npm
+        with:
+          package: synthetic-demo
+          version: '1.0.0'
+      - id: submit
+        continue-on-error: true
+        uses: ./promote-npm
+        with:
+          package: synthetic-demo
+          version: '1.0.0'
+          mode: submit
+      - id: check
+        continue-on-error: true
+        uses: ./check-npm-public
+        with:
+          package: synthetic-demo
+          version: '1.0.0'
+          integrity: malformed
+      - name: Ensure the composite entrypoints fail closed without credentials or valid inputs
+        shell: bash
+        run: |
+          test '${{ steps.validate.outcome }}' = failure
+          test '${{ steps.submit.outcome }}' = failure
+          test '${{ steps.check.outcome }}' = failure
+      - id: fixture
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
+        run: node test/fixtures/make-batch.mjs
+      - id: assembled
+        uses: ./assemble-npm-batch
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
+          NODE_OPTIONS: --import=${{ github.workspace }}/test/fixtures/batch-fetch.mjs
+        with:
+          selection: ${{ steps.fixture.outputs.selection }}
+      - id: good_batch
+        uses: ./promote-npm
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
+          INSIDER_TOKEN: synthetic-not-a-credential
+          NODE_OPTIONS: --import=${{ github.workspace }}/test/fixtures/batch-fetch.mjs
+        with:
+          batch: ${{ steps.assembled.outputs.batch }}
+      - name: Verify the two-package composite validation
+        run: |
+          node -e 'const r=require("./.promotion/batch/batch-result.json"); if (r.phase!=="validated" || r.packages.length!==2 || r.packages.some(p=>p.status!=="validated")) process.exit(1)'
+      - id: bad_batch
+        continue-on-error: true
+        uses: ./promote-npm
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
+          INSIDER_TOKEN: synthetic-not-a-credential
+          FIXTURE_MUTATE_TARBALL: 'true'
+          NODE_OPTIONS: --import=${{ github.workspace }}/test/fixtures/batch-fetch.mjs
+        with:
+          batch: ${{ steps.assembled.outputs.batch }}
+      - name: Verify an exact digest mismatch fails closed
+        run: |
+          test '${{ steps.bad_batch.outcome }}' = failure
+          node -e 'const r=require("./.promotion/batch/batch-result.json"); if (r.phase!=="validation_failed" || r.packages.some(p=>p.status==="submitted")) process.exit(1)'
