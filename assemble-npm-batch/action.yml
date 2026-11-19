@@ -1,8 +1,8 @@
 name: Assemble exact Insider npm batch
-description: Read existing Insider tarballs and pin their SHA-512 digests without registry writes.
+description: Read exact Insider package metadata and output expected digests without downloading archives.
 inputs:
   selection:
-    description: JSON with batchId and packages (exact name, version, tag per entry).
+    description: JSON with exact name/version entries; optional tag defaults to latest.
     required: true
 outputs:
   batch:

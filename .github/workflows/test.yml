@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - run: node --test promote-npm/*.test.mjs check-npm-public/*.test.mjs
+      - run: node --test assemble-npm-batch/*.test.mjs promote-npm/*.test.mjs check-npm-public/*.test.mjs
       - id: validate
         continue-on-error: true
         uses: ./promote-npm
@@ -52,6 +52,7 @@ jobs:
         env:
           FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
           NODE_OPTIONS: --import=${{ github.workspace }}/test/fixtures/batch-fetch.mjs
+          FIXTURE_NO_TARBALL: 'true'
         with:
           selection: ${{ steps.fixture.outputs.selection }}
       - id: good_batch
@@ -62,8 +63,11 @@ jobs:
           NODE_OPTIONS: --import=${{ github.workspace }}/test/fixtures/batch-fetch.mjs
         with:
           batch: ${{ steps.assembled.outputs.batch }}
-      - name: Verify the two-package composite validation
+      - name: Verify that promotion downloaded each tarball exactly once
+        env:
+          FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
         run: |
+          test "$(sort "$FIXTURE_DIRECTORY/downloads.txt" | paste -sd ',' -)" = '/tar0,/tar1'
           node -e 'const r=require("./.promotion/batch/batch-result.json"); if (r.phase!=="validated" || r.packages.length!==2 || r.packages.some(p=>p.status!=="validated")) process.exit(1)'
       - id: bad_batch
         continue-on-error: true
