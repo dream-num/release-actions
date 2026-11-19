@@ -16,9 +16,10 @@ globalThis.fetch=async (input,request)=>{
  }
  for (const [i,p] of entries.entries()){
   const source=await readFile(join(base,'pkg'+i+'.tgz'));
+  const current = process.env.FIXTURE_MUTATE_TARBALL === 'true' && i === 1 ? await readFile(join(base,'pkg1-changed.tgz')) : source;
   if(decodeURIComponent(url.pathname)==='/'+p.name) return json({name:p.name,versions:{[p.version]:{name:p.name,version:p.version,
-    dist:{integrity:'sha512-'+createHash('sha512').update(source).digest('base64'),tarball:origin+'/tar'+i}}},'dist-tags':{[p.tag]:p.version}});
-  if(url.pathname==='/tar'+i) return new Response(source);
+    dist:{integrity:'sha512-'+createHash('sha512').update(current).digest('base64'),tarball:origin+'/tar'+i}}},'dist-tags':{[p.tag]:p.version}});
+  if(url.pathname==='/tar'+i) return new Response(current);
  }
  throw Error('Unexpected fixture path');
 };
