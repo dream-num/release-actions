@@ -1,0 +1,33 @@
+name: Resolve an Insider publishing run
+description: Read the newest successful source attempt and its exact release receipt.
+inputs:
+  repository:
+    description: Source repository owner/name
+    required: true
+  run-id:
+    description: Source workflow run ID
+    required: true
+  producer:
+    description: Trusted caller JSON defining repository ID, workflow, ref, publish job and allowed packages
+    required: true
+  token:
+    description: Optional source repository Actions read token for private repositories
+    required: false
+outputs:
+  batch:
+    description: Exact batch derived from the producer receipt
+    value: ${{ steps.resolve.outputs.batch }}
+  attempt:
+    description: Verified latest successful attempt
+    value: ${{ steps.resolve.outputs.attempt }}
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        SOURCE_REPOSITORY: ${{ inputs.repository }}
+        SOURCE_RUN_ID: ${{ inputs.run-id }}
+        SOURCE_PRODUCER: ${{ inputs.producer }}
+        SOURCE_ACTIONS_TOKEN: ${{ inputs.token }}
+      run: node "$GITHUB_ACTION_PATH/resolve.mjs"

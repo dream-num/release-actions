@@ -87,3 +87,45 @@ Pass that output to `promote-npm` in the same workflow run. The promotion
 action downloads once per package, checks the bytes against the expected
 digest, and submits those same archives in submit mode. A one-entry batch is
 not special. No manually supplied digest or artifact transfer is required.
+
+### Resolve a source run instead of hand-entering packages
+
+The caller workflow keeps the reviewed producer policy static; do not build it
+from dispatch input or source artifact text. A private repository may use a
+token scoped only to Actions read on that source; omit the token for public
+sources. The receiving runner needs Node and Python 3.
+
+```yaml
+- id: source
+  uses: dream-num/release-actions/resolve-npm-source-run@REVIEWED_COMMIT
+  with:
+    repository: ${{ inputs.source_repository }}
+    run-id: ${{ inputs.source_run_id }}
+    producer: >-
+      {"repository":"example/producer","repositoryId":123,
+       "workflow":".github/workflows/release.yml","event":"workflow_dispatch",
+       "ref":"refs/heads/main","publishJob":"publish",
+       "packages":[{"name":"example-cli","tag":"promoted"}]}
+```
+
+The final attempt must be completed successfully; the action never searches for
+an older successful attempt. It requires the matching successful publish job
+and one `insider-release-v1-<attempt>` ZIP uploaded by the trusted producer
+during that job. The ZIP must contain just `insider-receipt.json`, with exact
+schema:
+
+```json
+{"schema":1,"repo":"example/producer","runId":42,"attempt":2,
+ "ref":"refs/heads/main","commit":"<40-hex GitHub source SHA>",
+ "packages":[{"name":"example-cli","version":"1.2.3",
+              "integrity":"sha512-<full original archive SHA-512>"}]}
+```
+
+The producer issues the receipt only after successful Insider publish and
+exact-version integrity readback. A prepare artifact is not a receipt.
+GitHub archive SHA-256 protects the receipt ZIP; the package SHA-512 is
+subsequently checked by the registry operation. The resolver does no npm
+operation and does not grant publishing rights. Pass `steps.source.outputs.batch`
+to `promote-npm` with `mode: validate` for an initial Insider verification, or pass
+one selected entry's name, version and integrity to `check-npm-public` for public
+visibility. Do not wire a receipt to an automatic unpublish operation.

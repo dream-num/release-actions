@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - run: node --test assemble-npm-batch/*.test.mjs promote-npm/*.test.mjs check-npm-public/*.test.mjs
+      - run: node --test assemble-npm-batch/*.test.mjs promote-npm/*.test.mjs check-npm-public/*.test.mjs resolve-npm-source-run/*.test.mjs
       - id: validate
         continue-on-error: true
         uses: ./promote-npm
@@ -37,12 +37,20 @@ jobs:
           package: synthetic-demo
           version: '1.0.0'
           integrity: malformed
+      - id: bad_source
+        continue-on-error: true
+        uses: ./resolve-npm-source-run
+        with:
+          repository: synthetic/missing
+          run-id: invalid
+          producer: '{}'
       - name: Ensure the composite entrypoints fail closed without credentials or valid inputs
         shell: bash
         run: |
           test '${{ steps.validate.outcome }}' = failure
           test '${{ steps.submit.outcome }}' = failure
           test '${{ steps.check.outcome }}' = failure
+          test '${{ steps.bad_source.outcome }}' = failure
       - id: fixture
         env:
           FIXTURE_DIRECTORY: ${{ runner.temp }}/action-batch-fixture
