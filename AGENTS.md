@@ -121,11 +121,14 @@ schema:
               "integrity":"sha512-<full original archive SHA-512>"}]}
 ```
 
-The producer issues the receipt only after successful Insider publish and
-exact-version integrity readback. A prepare artifact is not a receipt.
-GitHub archive SHA-256 protects the receipt ZIP; the package SHA-512 is
-subsequently checked by the registry operation. The resolver does no npm
-operation and does not grant publishing rights. Pass `steps.source.outputs.batch`
+The producer hashes the original npm archive before uploading to Insider,
+passes that SHA-512 through the CI build output, and copies it into the receipt
+only after successful publish. The receipt writer does not query the registry.
+A prepare artifact is not a receipt. GitHub archive SHA-256 protects the
+receipt ZIP; promotion independently hashes the actual selected Insider npm
+archive and compares its SHA-512 to the receipt before any npm write.
+The resolver does no npm operation and does not grant publishing rights.
+Pass `steps.source.outputs.batch`
 to `promote-npm` with `mode: validate` for an initial Insider verification, or pass
 one selected entry's name, version and integrity to `check-npm-public` for public
 visibility. Do not wire a receipt to an automatic unpublish operation.
