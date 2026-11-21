@@ -31,7 +31,7 @@ async function body(response, limit) {
 const workflowPath = /^\.github\/workflows\/([A-Za-z0-9._-]+\.ya?ml)$/u;
 const exactTag = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/u;
 
-async function resolveTaggedRun({root, policy, tag, workflow, json}) {
+async function resolveTaggedRun({root, policy, source, tag, json}) {
   const refPath = root+'/git/ref/tags/'+encodeURIComponent(tag);
   const exactRef = 'refs/tags/'+tag;
   const tagRef = await json(refPath);
@@ -50,7 +50,7 @@ async function resolveTaggedRun({root, policy, tag, workflow, json}) {
     object = sub.object;
   }
   const commit = object.sha;
-  const runsPath = root+'/actions/workflows/'+encodeURIComponent(workflow)+'/runs?'+
+  const runsPath = root+'/actions/workflows/'+source.workflowId+'/runs?'+
     new URLSearchParams({head_sha:commit,event:policy.event,per_page:'100'});
   async function candidates() {
     const result = await json(runsPath);
@@ -61,9 +61,9 @@ async function resolveTaggedRun({root, policy, tag, workflow, json}) {
       // A SHA can be shared by tag and branch workflow runs.
       if (run?.head_branch !== tag) continue;
       require(safeID(run.id) && safeID(run.run_attempt) && run.head_sha === commit &&
-        run.path === policy.workflow && run.event === policy.event &&
-        run.repository?.id === policy.repositoryId && run.repository.full_name === policy.repository &&
-        run.head_repository?.id === policy.repositoryId && run.head_repository.full_name === policy.repository &&
+        run.path === policy.workflow && run.workflow_id === source.workflowId && run.event === policy.event &&
+        run.repository?.id === source.repositoryId && run.repository.full_name === policy.repository &&
+        run.head_repository?.id === source.repositoryId && run.head_repository.full_name === policy.repository &&
         validDate(run.created_at) && !found.has(run.id),'Tag run list contains unverified or duplicate candidates');
       found.set(run.id,run);
     }
@@ -118,7 +118,7 @@ function readReceipt(zip) {
   try { return JSON.parse(child.stdout); } catch { throw Error('Invalid receipt JSON'); }
 }
 
-export async function resolveRun({repository, runId, producer, token, workflow, tag, version}, {fetcher=fetch, now=Date.now()}={}) {
+export async function resolveRun({repository, runId, producer, token, workflow, tag, version}, {fetcher=fetch, now=Date.now(), callerRepository, callerRepositoryId}={}) {
   const byVersion = version !== undefined && version !== '';
   const byTag = byVersion || !!tag || !!workflow;
   require(byTag ? (!runId && typeof workflow==='string' && workflowPath.test('.github/workflows/'+workflow) &&
@@ -130,7 +130,9 @@ export async function resolveRun({repository, runId, producer, token, workflow, 
   require(typeof producer === 'string' && Buffer.byteLength(producer) <= 32 * 1024,'Invalid producer policy');
   let p;
   try { p = JSON.parse(producer); } catch { throw Error('Invalid producer policy JSON'); }
-  const policyKeys = ['repository','repositoryId','workflow','event','ref','publishJob','packages'];
+  const policyKeys = ['repository','workflow','event','ref','publishJob','packages'];
+  // Existing automated callers may still supply an immutable identity pin.
+  if (Object.hasOwn(p ?? {},'repositoryId')) policyKeys.push('repositoryId');
   if (byTag && Object.hasOwn(p ?? {},'prepareJob')) policyKeys.push('prepareJob');
   if (byVersion) {
     policyKeys.push('tagPrefix','versionPackage');
@@ -140,7 +142,7 @@ export async function resolveRun({repository, runId, producer, token, workflow, 
     require(exactTag.test(tag),'Derived Git tag is not supported');
   }
   require(keysAre(p,policyKeys) &&
-    p.repository === repository && safeID(p.repositoryId) &&
+    p.repository === repository && (!Object.hasOwn(p,'repositoryId') || safeID(p.repositoryId)) &&
     typeof p.workflow === 'string' && workflowPath.test(p.workflow) &&
     ['workflow_dispatch','push','release'].includes(p.event) &&
     typeof p.ref === 'string' &&
@@ -172,15 +174,35 @@ export async function resolveRun({repository, runId, producer, token, workflow, 
     const bytes = await body(result,1024*1024);
     try { return JSON.parse(bytes); } catch { throw Error('Invalid GitHub source metadata'); }
   }
-  const selected = byTag ? await resolveTaggedRun({root,policy:p,tag,workflow,json}) : undefined;
+  const workflowFile = workflowPath.exec(p.workflow)[1];
+  const sourceOwner = repository.split('/')[0];
+  async function sourceIdentity() {
+    // Follow no redirect: a moved or renamed producer must be reviewed under its new name.
+    const repo = await json(root);
+    require(repo?.full_name === repository && safeID(repo.id) && repo.owner?.login === sourceOwner &&
+      safeID(repo.owner.id), 'GitHub did not confirm the exact source repository and owner');
+    // Inside the producer's own repository, bind to GitHub's immutable job context.
+    if (callerRepository === repository) {
+      require(typeof callerRepositoryId === 'string' && String(repo.id) === callerRepositoryId,
+        'Source repository does not match the running workflow repository');
+    }
+    require(p.repositoryId === undefined || repo.id === p.repositoryId,
+      'Source repository no longer matches its previous identity pin');
+    const workflowRecord = await json(root+'/actions/workflows/'+encodeURIComponent(workflowFile));
+    require(workflowRecord?.path === p.workflow && safeID(workflowRecord.id),
+      'GitHub did not confirm the exact source workflow');
+    return {repositoryId:repo.id, ownerId:repo.owner.id, workflowId:workflowRecord.id};
+  }
+  const source = await sourceIdentity();
+  const selected = byTag ? await resolveTaggedRun({root,policy:p,source,tag,json}) : undefined;
   if (selected) runId = selected.runId;
   const expectedRef = selected ? 'refs/tags/'+tag : p.ref;
   const base = root + '/actions/runs/' + runId;
   function identity(run) {
     require(run?.id === Number(runId) && safeID(run.run_attempt) &&
-      run.repository?.id === p.repositoryId && run.repository.full_name === repository &&
-      run.head_repository?.id === p.repositoryId && run.head_repository.full_name === repository &&
-      run.path === p.workflow && run.event === p.event &&
+      run.repository?.id === source.repositoryId && run.repository.full_name === repository &&
+      run.head_repository?.id === source.repositoryId && run.head_repository.full_name === repository &&
+      run.path === p.workflow && run.workflow_id === source.workflowId && run.event === p.event &&
       run.head_branch === expectedRef.replace(/^refs\/(heads|tags)\//u,'') &&
       typeof run.head_sha === 'string' && sha.test(run.head_sha),
       'Source run does not match the trusted producer');
@@ -210,8 +232,8 @@ export async function resolveRun({repository, runId, producer, token, workflow, 
     Date.parse(artifact.created_at) <= Date.parse(job.completed_at) &&
     safeID(artifact.size_in_bytes) && artifact.size_in_bytes <= receiptLimit &&
     typeof artifact.digest === 'string' && digestPattern.test(artifact.digest) &&
-    artifact.workflow_run?.id === Number(runId) && artifact.workflow_run.repository_id === p.repositoryId &&
-    artifact.workflow_run.head_repository_id === p.repositoryId && artifact.workflow_run.head_sha === exact.head_sha &&
+    artifact.workflow_run?.id === Number(runId) && artifact.workflow_run.repository_id === source.repositoryId &&
+    artifact.workflow_run.head_repository_id === source.repositoryId && artifact.workflow_run.head_sha === exact.head_sha &&
     artifact.workflow_run.head_branch === exact.head_branch,
     'Expected one current source receipt with verified artifact identity');
   const response = await request(api+'/repos/'+repository+'/actions/artifacts/'+artifact.id+'/zip',{headers});
@@ -232,7 +254,7 @@ export async function resolveRun({repository, runId, producer, token, workflow, 
     receipt.attempt === attempt && receipt.ref === expectedRef && receipt.commit === exact.head_sha &&
     Array.isArray(receipt.packages) && receipt.packages.length > 0 && receipt.packages.length <= packages.size,
     'Receipt does not match the latest successful source attempt');
-  const batch = parseBatch(JSON.stringify({schema:1,batchId:`gh-${p.repositoryId}-${runId}-${attempt}`,sourceRegistry:INSIDER,
+  const batch = parseBatch(JSON.stringify({schema:1,batchId:`gh-${source.repositoryId}-${runId}-${attempt}`,sourceRegistry:INSIDER,
     packages:receipt.packages.map(item => {
       require(keysAre(item,['name','version','integrity']) && packages.has(item.name),'Receipt contains an unapproved package');
       require(typeof item.version === 'string' && typeof item.integrity === 'string','Invalid receipt package version or integrity');
@@ -243,6 +265,9 @@ export async function resolveRun({repository, runId, producer, token, workflow, 
   const current = identity(await json(base));
   require(current.run_attempt === attempt && current.head_sha === exact.head_sha,'Source attempt changed during verification');
   await selected?.assertUnchanged();
+  const currentSource = await sourceIdentity();
+  require(currentSource.repositoryId === source.repositoryId && currentSource.ownerId === source.ownerId &&
+    currentSource.workflowId === source.workflowId,'Source repository or workflow identity changed during verification');
   return {batch,attempt,runId:Number(runId),...(byVersion ? {version} : {})};
 }
 
@@ -250,7 +275,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const {batch,attempt,runId,version} = await resolveRun({repository:process.env.SOURCE_REPOSITORY,runId:process.env.SOURCE_RUN_ID,
       workflow:process.env.SOURCE_WORKFLOW,tag:process.env.SOURCE_TAG,version:process.env.SOURCE_VERSION,
-      producer:process.env.SOURCE_PRODUCER,token:process.env.SOURCE_ACTIONS_TOKEN});
+      producer:process.env.SOURCE_PRODUCER,token:process.env.SOURCE_ACTIONS_TOKEN},
+      {callerRepository:process.env.GITHUB_REPOSITORY,callerRepositoryId:process.env.GITHUB_REPOSITORY_ID});
     await appendFile(process.env.GITHUB_OUTPUT,'batch='+JSON.stringify(batch)+'\nattempt='+attempt+'\nrun_id='+runId+'\nversion='+(version??'')+'\n');
   } catch (error) {
     // HTTP headers, bodies and signed download URLs are never emitted.

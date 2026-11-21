@@ -102,11 +102,20 @@ sources. The receiving runner needs Node and Python 3.
     repository: ${{ inputs.source_repository }}
     run-id: ${{ inputs.source_run_id }}
     producer: >-
-      {"repository":"example/producer","repositoryId":123,
+      {"repository":"example/producer",
        "workflow":".github/workflows/release.yml","event":"workflow_dispatch",
        "ref":"refs/heads/main","publishJob":"publish",
        "packages":[{"name":"example-cli","tag":"promoted"}]}
 ```
+
+Use the exact GitHub `owner/repo` and workflow file, not a numeric GitHub
+identifier. The Action reads the canonical repository, owner and workflow from
+GitHub before and after verification, rejects redirects, and compares the run
+and artifact identifiers internally. When the caller is the source repository,
+it also checks GitHub Actions' own repository identity. A cross-repository
+slug alone cannot distinguish a repository that was deleted and recreated
+under exactly the same name between runs; an existing independently pinned
+legacy identity is still checked if present.
 
 The final attempt must be completed successfully; the action never searches for
 an older successful attempt. It requires the matching successful publish job
@@ -138,7 +147,7 @@ visibility. Do not wire a receipt to an automatic unpublish operation.
 For releases tied to an exact Git tag, callers can omit `run-id` and set
 `workflow` to the reviewed workflow filename and `tag` to the exact Git tag
 (e.g. `v1.2.3`). Use a static producer policy with the same workflow path,
-`ref: "refs/tags/"`, repository ID and allowed packages; do not take trust
+`ref: "refs/tags/"` and allowed packages; do not take trust
 policy from workflow dispatch or a receipt. Tag mode accepts one simple tag
 name (letters, digits, dot, underscore, plus or hyphen). Private repositories also
 need Contents read to resolve the tag. Direct run-ID inputs still work.
@@ -175,7 +184,7 @@ Other explicitly allowed packages retain their exact receipt versions.
     workflow: release-cli-manual.yml
     version: ${{ inputs.version }}
     producer: >-
-      {"repository":"dream-num/univer-workspace","repositoryId":1334011664,
+      {"repository":"dream-num/univer-workspace",
        "workflow":".github/workflows/release-cli-manual.yml",
        "event":"workflow_dispatch","ref":"refs/tags/","tagPrefix":"v",
        "versionPackage":"univer-workspace-cli","prepareJob":"prepare",
