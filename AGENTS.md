@@ -132,3 +132,28 @@ Pass `steps.source.outputs.batch`
 to `promote-npm` with `mode: validate` for an initial Insider verification, or pass
 one selected entry's name, version and integrity to `check-npm-public` for public
 visibility. Do not wire a receipt to an automatic unpublish operation.
+
+### Select a source by Git tag
+
+For releases tied to an exact Git tag, callers can omit `run-id` and set
+`workflow` to the reviewed workflow filename and `tag` to the exact Git tag
+(e.g. `v1.2.3`). Use a static producer policy with the same workflow path,
+`ref: "refs/tags/"`, repository ID and allowed packages; do not take trust
+policy from workflow dispatch or a receipt. Tag mode accepts one simple tag
+name (letters, digits, dot, underscore or hyphen). Private repositories also
+need Contents read to resolve the tag. Direct run-ID inputs still work.
+
+The Action resolves lightweight or annotated tags to a commit, lists that
+workflow's runs for the commit, and selects the newest matching tag run
+before checking its latest attempt. Run listings use a short ref name;
+the same-name branch is not proof of a tag. The actual release receipt
+must bind the full tag ref, commit, run ID and attempt. No earlier successful
+release is selected if the newest possible release failed, was cancelled,
+is incomplete or has uncertain evidence.
+
+A reviewed producer can opt into a `prepareJob` policy only when a successful
+latest-attempt prepare job plus a skipped publish job is guaranteed to mean a
+build-only dispatch. If that signature cannot be verified or the workflow has
+other skip conditions, leave the option unset: a possible release is never
+silently skipped. Missing, moved, ambiguous or incompletely listed tags fail
+closed. The outputs provide the selected run ID, attempt, and exact batch.

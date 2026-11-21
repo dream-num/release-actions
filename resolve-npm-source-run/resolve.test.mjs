@@ -30,21 +30,47 @@ sys.stdout.buffer.write(b.getvalue())
 `,overrides.filename??'insider-receipt.json'],{input:JSON.stringify({...receipt,...overrides.receipt})});
   assert.equal(archive.status,0);
   const zip=archive.stdout;
+  const expectedBranch=overrides.headBranch??'main';
+  const source={...run,head_branch:expectedBranch};
   const artifact={id:51,name:'insider-release-v1-2',expired:false,expires_at:'2026-01-02T00:00:00Z',
     created_at:'2026-01-01T00:09:00Z',size_in_bytes:zip.length,
     digest:'sha256:'+createHash('sha256').update(zip).digest('hex'),
-    workflow_run:{id:42,repository_id:3,head_repository_id:3,head_sha:commit,head_branch:'main'},...overrides.artifact};
+    workflow_run:{id:42,repository_id:3,head_repository_id:3,head_sha:commit,head_branch:expectedBranch},...overrides.artifact};
   const calls=[];
+  let latestReads=0;
+  let refs=0, lists=0;
   const json=value=>Response.json(value);
   const fetcher=async(url,init)=>{
     calls.push(url);
     assert.equal(init.redirect,'manual');
     if(url.startsWith(home)) assert.equal(init.headers.authorization,'Bearer '+token);
+    if(overrides.tagMode){
+      const root='https://api.github.com/repos/'+repository;
+      const tag='v1.2.3', tagObject='c'.repeat(40);
+      const ref=overrides.lightweight?{type:'commit',sha:commit}:{type:'tag',sha:tagObject};
+      const normal={...source,created_at:'2026-01-01T00:00:00Z'};
+      const newer={...normal,id:43,created_at:'2026-01-01T00:01:00Z',...overrides.newer};
+      if(url===root+'/git/ref/tags/'+tag)
+        return json({ref:'refs/tags/'+tag,object:++refs>1&&overrides.retag?{...ref,sha:'d'.repeat(40)}:ref});
+      if(url===root+'/git/tags/'+tagObject)
+        return json({tag,sha:tagObject,object:{type:'commit',sha:commit}});
+      if(url===home+'/workflows/release.yml/runs?head_sha='+commit+'&event=workflow_dispatch&per_page=100'){
+        const branch={...newer,head_branch:'main',id:44};
+        const records=overrides.newer?[branch,normal,newer]:[branch,normal];
+        if(++lists>1&&overrides.raceTag)records.push({...newer,id:45,created_at:'2026-01-01T00:03:00Z'});
+        return json({total_count:overrides.incomplete?101:records.length,workflow_runs:records});
+      }
+      if(url===home+'/runs/43/attempts/2/jobs?per_page=100'){
+        const jobs=overrides.newJobs??[];
+        return json({jobs,total_count:jobs.length});
+      }
+      if(url===home+'/runs/43')return json(newer);
+    }
     switch(url){
       case home+'/runs/42':
-        return json({...run,...overrides.latest,...(calls.length>1?overrides.race:{})});
+        return json({...source,...overrides.latest,...(++latestReads>1?overrides.race:{})});
       case home+'/runs/42/attempts/2':
-        return json({...run,...overrides.attempt});
+        return json({...source,...overrides.attempt});
       case home+'/runs/42/attempts/2/jobs?per_page=100':
         return json({jobs:[{...job,...overrides.job}],total_count:1});
       case home+'/runs/42/artifacts?per_page=100&name=insider-release-v1-2':
@@ -105,5 +131,56 @@ for(const [name,overrides,error] of [
 test('does not send a token to a repository absent from the reviewed policy',async()=>{
   const f=fixture();
   await assert.rejects(f.run({...options,repository:'example/other'}),/not allowed/);
+  assert.deepEqual(f.calls,[]);
+});
+
+const tag = 'v1.2.3';
+const tagArgs = {repository,workflow:'release.yml',tag,token,producer:JSON.stringify({...JSON.parse(producer),
+  ref:'refs/tags/',prepareJob:'prepare'})};
+function tagged(override={}){
+  return fixture({tagMode:true,headBranch:tag,...override,receipt:{ref:'refs/tags/'+tag,...override.receipt}});
+}
+const donePrepare={name:'prepare',run_attempt:2,status:'completed',conclusion:'success'};
+const skippedPublish={name:'publish',run_attempt:2,status:'completed',conclusion:'skipped'};
+
+for (const lightweight of [false,true]) {
+  test('resolves '+(lightweight?'lightweight':'annotated')+' tag commit and verifies exact successful receipt',async()=>{
+    const f=tagged({lightweight});
+    const result=await f.run(tagArgs);
+    assert.equal(result.runId,42);
+    assert.equal(result.attempt,2);
+    assert.equal(result.batch.packages[0].integrity,hash);
+    assert.ok(f.calls.some(url=>url.includes('head_sha='+commit)));
+    assert.ok(f.calls.every(url=>!url.includes('status=success')));
+  });
+}
+test('skips newest build-only run only when the reviewed latest jobs prove it',async()=>{
+  const f=tagged({newer:{},newJobs:[donePrepare,skippedPublish]});
+  assert.equal((await f.run(tagArgs)).runId,42);
+  assert.ok(f.calls.some(url=>url.endsWith('/runs/43/attempts/2/jobs?per_page=100')));
+});
+for (const [name,overrides,error] of [
+  ['newest failed release', {newer:{conclusion:'failure'}}, /Latest source attempt/],
+  ['newest cancelled run', {newer:{conclusion:'cancelled'}}, /Latest source attempt/],
+  ['newest in-progress run', {newer:{status:'in_progress',conclusion:null}}, /not completed/],
+  ['inconclusive build-only signature', {newer:{},newJobs:[skippedPublish]}, /Cannot prove/],
+  ['unknown newest publish job', {newer:{}}, /no conclusive publish job/],
+  ['wrong attempt build-only marker', {newer:{},newJobs:[donePrepare,{...skippedPublish,run_attempt:1}]}, /no conclusive publish job/],
+  ['same time ambiguous runs', {newer:{created_at:'2026-01-01T00:00:00Z'}}, /same creation time/],
+  ['incomplete search', {incomplete:true}, /run list is incomplete/],
+  ['tag moved', {retag:true}, /Git tag moved/],
+  ['newer run appeared', {raceTag:true}, /Latest tag run changed/],
+  ['same-named branch receipt', {receipt:{ref:'refs/heads/'+tag}}, /does not match/],
+]){
+  test('tag path rejects '+name,async()=>{
+    const f=tagged(overrides);
+    await assert.rejects(f.run(tagArgs),error);
+    if(overrides.newer) assert.ok(f.calls.every(url=>url!==home+'/runs/42'));
+  });
+}
+test('tag and run ID are mutually exclusive and workflow must match reviewed policy',async()=>{
+  const f=tagged();
+  await assert.rejects(f.run({...tagArgs,runId}),/either an exact run ID/);
+  await assert.rejects(f.run({...tagArgs,workflow:'imposter.yml'}),/not allowed/);
   assert.deepEqual(f.calls,[]);
 });

@@ -5,13 +5,19 @@ inputs:
     description: Source repository owner/name
     required: true
   run-id:
-    description: Source workflow run ID
-    required: true
+    description: Exact run ID; mutually exclusive with workflow and tag
+    required: false
+  workflow:
+    description: Source workflow filename, required for tag selection
+    required: false
+  tag:
+    description: Exact Git tag, required for tag selection
+    required: false
   producer:
     description: Trusted caller JSON defining repository ID, workflow, ref, publish job and allowed packages
     required: true
   token:
-    description: Optional source repository Actions read token for private repositories
+    description: Optional source repository source read token (Actions, and Contents for tag lookup)
     required: false
 outputs:
   batch:
@@ -20,6 +26,9 @@ outputs:
   attempt:
     description: Verified latest successful attempt
     value: ${{ steps.resolve.outputs.attempt }}
+  run-id:
+    description: Verified source run ID
+    value: ${{ steps.resolve.outputs.run_id }}
 runs:
   using: composite
   steps:
@@ -28,6 +37,8 @@ runs:
       env:
         SOURCE_REPOSITORY: ${{ inputs.repository }}
         SOURCE_RUN_ID: ${{ inputs.run-id }}
+        SOURCE_WORKFLOW: ${{ inputs.workflow }}
+        SOURCE_TAG: ${{ inputs.tag }}
         SOURCE_PRODUCER: ${{ inputs.producer }}
         SOURCE_ACTIONS_TOKEN: ${{ inputs.token }}
       run: node "$GITHUB_ACTION_PATH/resolve.mjs"
