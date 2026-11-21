@@ -196,3 +196,10 @@ Version, explicit tag and direct run ID are alternative selectors. There
 is no fallback between them. Consumers should not expose a dispatch field
 that overrides source policy. An Insider build whose version is not associated
 with a Git tag does not match this mode; use the exact run path instead.
+
+For verification of public **bytes**, set `check-npm-public`'s
+`verify-tarball: 'true'`. This opt-in keeps existing metadata-only callers
+compatible. It only fetches the exact canonical public npm archive, hashes
+bounded streamed bytes, and returns `visible_match` only if those bytes
+match the pre-upload digest. Treat `not_visible` or `mismatch` as not verified
+in a manual verification workflow. It needs no npm credentials.
