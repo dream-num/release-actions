@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {appendFile} from 'node:fs/promises';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {parseBatch} from '../promote-npm/batch.mjs';
-import {INSIDER,validatePackageName} from '../promote-npm/engine.mjs';
+import {INSIDER,validatePackageName,validateVersion} from '../promote-npm/engine.mjs';
 
 const api = 'https://api.github.com';
 const receiptLimit = 64 * 1024;
@@ -29,7 +29,7 @@ async function body(response, limit) {
 }
 
 const workflowPath = /^\.github\/workflows\/([A-Za-z0-9._-]+\.ya?ml)$/u;
-const exactTag = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const exactTag = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/u;
 
 async function resolveTaggedRun({root, policy, tag, workflow, json}) {
   const refPath = root+'/git/ref/tags/'+encodeURIComponent(tag);
@@ -118,18 +118,27 @@ function readReceipt(zip) {
   try { return JSON.parse(child.stdout); } catch { throw Error('Invalid receipt JSON'); }
 }
 
-export async function resolveRun({repository, runId, producer, token, workflow, tag}, {fetcher=fetch, now=Date.now()}={}) {
-  const byTag = !!tag || !!workflow;
-  require(byTag ? (!runId && typeof tag==='string' && exactTag.test(tag) && !tag.includes('..') &&
-    typeof workflow==='string' && workflowPath.test('.github/workflows/'+workflow))
+export async function resolveRun({repository, runId, producer, token, workflow, tag, version}, {fetcher=fetch, now=Date.now()}={}) {
+  const byVersion = version !== undefined && version !== '';
+  const byTag = byVersion || !!tag || !!workflow;
+  require(byTag ? (!runId && typeof workflow==='string' && workflowPath.test('.github/workflows/'+workflow) &&
+    (byVersion ? !tag : typeof tag==='string' && exactTag.test(tag) && !tag.includes('..')))
     : (typeof runId==='string' && /^[1-9][0-9]*$/u.test(runId) && safeID(Number(runId))),
-    'Provide either an exact run ID or a workflow filename and Git tag');
+    'Provide either an exact run ID or a workflow filename and Git tag or version');
+  if (byVersion) validateVersion(version);
   require(typeof repository === 'string' && repositoryPattern.test(repository) && !/\/(?:\.|\.\.)$/u.test(repository) && repository.length <= 150, 'Invalid source repository');
   require(typeof producer === 'string' && Buffer.byteLength(producer) <= 32 * 1024,'Invalid producer policy');
   let p;
   try { p = JSON.parse(producer); } catch { throw Error('Invalid producer policy JSON'); }
   const policyKeys = ['repository','repositoryId','workflow','event','ref','publishJob','packages'];
   if (byTag && Object.hasOwn(p ?? {},'prepareJob')) policyKeys.push('prepareJob');
+  if (byVersion) {
+    policyKeys.push('tagPrefix','versionPackage');
+    require(typeof p?.tagPrefix==='string' && /^[A-Za-z0-9_-]{0,32}$/u.test(p.tagPrefix) &&
+      typeof p.versionPackage==='string','Version input requires a reviewed tag prefix and version package');
+    tag = p.tagPrefix + version;
+    require(exactTag.test(tag),'Derived Git tag is not supported');
+  }
   require(keysAre(p,policyKeys) &&
     p.repository === repository && safeID(p.repositoryId) &&
     typeof p.workflow === 'string' && workflowPath.test(p.workflow) &&
@@ -149,6 +158,7 @@ export async function resolveRun({repository, runId, producer, token, workflow, 
     validatePackageName(entry.name);
     packages.set(entry.name,entry.tag);
   }
+  require(!byVersion || packages.has(p.versionPackage),'Version package is not allowed by caller policy');
   const root = '/repos/' + repository;
   const headers = {accept:'application/vnd.github+json','x-github-api-version':'2022-11-28',
     ...(token ? {authorization:'Bearer '+token} : {})};
@@ -228,18 +238,20 @@ export async function resolveRun({repository, runId, producer, token, workflow, 
       require(typeof item.version === 'string' && typeof item.integrity === 'string','Invalid receipt package version or integrity');
       return {...item,tag:packages.get(item.name)};
     })}));
+  require(!byVersion || batch.packages.some(item=>item.name===p.versionPackage && item.version===version),
+    'Receipt does not contain the requested exact package version');
   const current = identity(await json(base));
   require(current.run_attempt === attempt && current.head_sha === exact.head_sha,'Source attempt changed during verification');
   await selected?.assertUnchanged();
-  return {batch,attempt,runId:Number(runId)};
+  return {batch,attempt,runId:Number(runId),...(byVersion ? {version} : {})};
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const {batch,attempt,runId} = await resolveRun({repository:process.env.SOURCE_REPOSITORY,runId:process.env.SOURCE_RUN_ID,
-      workflow:process.env.SOURCE_WORKFLOW,tag:process.env.SOURCE_TAG,
+    const {batch,attempt,runId,version} = await resolveRun({repository:process.env.SOURCE_REPOSITORY,runId:process.env.SOURCE_RUN_ID,
+      workflow:process.env.SOURCE_WORKFLOW,tag:process.env.SOURCE_TAG,version:process.env.SOURCE_VERSION,
       producer:process.env.SOURCE_PRODUCER,token:process.env.SOURCE_ACTIONS_TOKEN});
-    await appendFile(process.env.GITHUB_OUTPUT,'batch='+JSON.stringify(batch)+'\nattempt='+attempt+'\nrun_id='+runId+'\n');
+    await appendFile(process.env.GITHUB_OUTPUT,'batch='+JSON.stringify(batch)+'\nattempt='+attempt+'\nrun_id='+runId+'\nversion='+(version??'')+'\n');
   } catch (error) {
     // HTTP headers, bodies and signed download URLs are never emitted.
     console.error(error.message);

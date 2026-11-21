@@ -184,3 +184,34 @@ test('tag and run ID are mutually exclusive and workflow must match reviewed pol
   await assert.rejects(f.run({...tagArgs,workflow:'imposter.yml'}),/not allowed/);
   assert.deepEqual(f.calls,[]);
 });
+
+const versionArgs={...tagArgs,tag:undefined,version:'1.2.3',producer:JSON.stringify({
+  ...JSON.parse(tagArgs.producer),tagPrefix:'v',versionPackage:'example-cli',
+})};
+test('exact version derives reviewed tag and returns downstream batch, run, attempt and version',async()=>{
+  const f=tagged();
+  const result=await f.run(versionArgs);
+  assert.equal(result.version,'1.2.3');
+  assert.equal(result.runId,42);
+  assert.equal(result.attempt,2);
+  assert.equal(result.batch.packages[0].version,result.version);
+});
+test('version cannot be a range or silently switch to an explicit tag or run',async()=>{
+  const f=tagged();
+  for(const version of ['latest','^1.2.3','1.2','1.2.3-01',' 1.2.3']) {
+    await assert.rejects(f.run({...versionArgs,version}),/exact SemVer/u);
+  }
+  await assert.rejects(f.run({...versionArgs,tag}),/either an exact run ID/);
+  await assert.rejects(f.run({...versionArgs,runId}),/either an exact run ID/);
+  await assert.rejects(f.run({...versionArgs,producer:tagArgs.producer}),/reviewed tag prefix and version package/);
+  assert.deepEqual(f.calls,[]);
+});
+test('matching tag must still name the exact requested package version in its receipt',async()=>{
+  const f=tagged({receipt:{packages:[{...receipt.packages[0],version:'1.2.4'}]}});
+  await assert.rejects(f.run(versionArgs),/requested exact package version/);
+});
+test('latest failure never searches older successes when the operator supplied a version',async()=>{
+  const f=tagged({newer:{conclusion:'failure'}});
+  await assert.rejects(f.run(versionArgs),/Latest source attempt/);
+  assert.ok(f.calls.every(url=>url!==home+'/runs/42'));
+});

@@ -140,7 +140,7 @@ For releases tied to an exact Git tag, callers can omit `run-id` and set
 (e.g. `v1.2.3`). Use a static producer policy with the same workflow path,
 `ref: "refs/tags/"`, repository ID and allowed packages; do not take trust
 policy from workflow dispatch or a receipt. Tag mode accepts one simple tag
-name (letters, digits, dot, underscore or hyphen). Private repositories also
+name (letters, digits, dot, underscore, plus or hyphen). Private repositories also
 need Contents read to resolve the tag. Direct run-ID inputs still work.
 
 The Action resolves lightweight or annotated tags to a commit, lists that
@@ -157,3 +157,42 @@ build-only dispatch. If that signature cannot be verified or the workflow has
 other skip conditions, leave the option unset: a possible release is never
 silently skipped. Missing, moved, ambiguous or incompletely listed tags fail
 closed. The outputs provide the selected run ID, attempt, and exact batch.
+
+### Version-only operator input and workflow output contract
+
+A product workflow pins the reviewed action commit and the trusted source
+policy. The operator only enters an exact version. The static policy sets
+`tagPrefix` (e.g. `"v"`, or `""` for unprefixed tags) and `versionPackage`
+(the allowed package whose exact version must appear in the receipt).
+Other explicitly allowed packages retain their exact receipt versions.
+
+```yaml
+# The caller's manual workflow declares only inputs.version.
+- id: release
+  uses: dream-num/release-actions/resolve-npm-source-run@REVIEWED_COMMIT
+  with:
+    repository: dream-num/univer-workspace
+    workflow: release-cli-manual.yml
+    version: ${{ inputs.version }}
+    producer: >-
+      {"repository":"dream-num/univer-workspace","repositoryId":1334011664,
+       "workflow":".github/workflows/release-cli-manual.yml",
+       "event":"workflow_dispatch","ref":"refs/tags/","tagPrefix":"v",
+       "versionPackage":"univer-workspace-cli","prepareJob":"prepare",
+       "publishJob":"publish",
+       "packages":[{"name":"univer-workspace-cli","tag":"latest"}]}
+```
+
+- `steps.release.outputs.batch` is the existing **schema 1 batch JSON**,
+  including package names, exact versions, original SHA-512 digests, and
+  target tags. Pass it unchanged as `promote-npm`'s `batch` with
+  `mode: validate`, or use its exact package entry for read-only public
+  verification. No clipboard handoff or string parsing is needed.
+- `steps.release.outputs.run-id` and `steps.release.outputs.attempt` identify
+  the exact successful source execution. `steps.release.outputs.version`
+  echoes the verified exact version in version mode only.
+
+Version, explicit tag and direct run ID are alternative selectors. There
+is no fallback between them. Consumers should not expose a dispatch field
+that overrides source policy. An Insider build whose version is not associated
+with a Git tag does not match this mode; use the exact run path instead.
